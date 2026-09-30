@@ -1,4 +1,5 @@
-# VoiceGuard AI
+# AI Voice vs Real Voice Prediction
+
 
 ### AI Voice vs Real Voice Prediction
 
@@ -327,6 +328,3 @@ B.Tech Computer Science & Engineering (Data Science)
 
 [GitHub repository](https://github.com/tulsibhelkar/AI-Voice-vs-Real-Voice-Prediction) · [YouTube demo](https://youtu.be/b05BEmNYW-I)
 
-## License
-
-This project is released under the MIT License. See [`LICENSE`](LICENSE).
