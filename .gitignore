@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# Secrets and local configuration
+.env
+.env.*
+*.env
+!.env.example
+*.key
+*.pem
+
+# Jupyter and local tools
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+# Frontend
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime files
+backend/uploads/*
+!backend/uploads/.gitkeep
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Dataset files: keep only JSON split metadata
+/data/*
+!/data/splits/
+/data/splits/*
+!/data/splits/*.json
+
+# Audio recordings
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.ogg
+*.aac
+*.wma
+
+# Training artifacts
+/saved_models/*
+!/saved_models/README.md
+!/saved_models/.gitkeep
+*.pth
+*.pt
+*.ckpt
+/outputs/
+/reports/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
