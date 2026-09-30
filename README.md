@@ -297,21 +297,7 @@ The training script shown for this project writes to that checkpoint path. Back 
 
 Do not commit private recordings, credentials, virtual environments, or generated upload files. If the model checkpoint exceeds GitHub's normal file limit, use Git LFS or publish it as a release asset.
 
-## Responsible interpretation
-
-This project is a research prototype, not a forensic certification tool. Performance can change with speaker identity, language, microphone, compression, background noise, sample rate, and an AI generator that was not represented during training.
-
-The current project does not make a universal accuracy claim. A small local comparison set is not enough to estimate real-world performance, and timeline segments should not be presented as exact manipulation boundaries. For a stronger research result, evaluate on speaker-disjoint and generator-disjoint recordings with a larger, documented test protocol.
-
-## Roadmap
-
-- Expand the evaluation protocol with unseen speakers, codecs, languages, and TTS generators.
-- Add calibrated confidence and an abstain/uncertain result for low-confidence inputs.
-- Compare the CNN–Transformer with pretrained audio encoders.
-- Add data augmentation for noise, reverberation, resampling, and compression.
-- Add explainability views such as spectrogram saliency or attention summaries.
-- Package the model with a reproducible deployment configuration.
-
+ 
 ## Citation and references
 
 - [Hugging Face Datasets](https://huggingface.co/docs/datasets)
