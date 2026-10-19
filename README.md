@@ -43,67 +43,35 @@ Timeline windows describe model behavior over time. They do not prove the exact 
 - SQLite-backed prediction history.
 - Separate frontend, backend, model, preprocessing, and data-split layers for reproducible development.
 
+  ## Hybrid Voice Detection
+
+VoiceGuard AI includes a hybrid voice detection module designed to analyze recordings that may contain both human and AI-generated speech.
+
+Unlike standard prediction, which uses a single four-second input, hybrid analysis processes the recording using overlapping audio windows.
+
+### How it works
+
+1. The user uploads an audio recording.
+2. The backend loads and prepares the audio.
+3. The recording is divided into four-second windows with a two-second step.
+4. Each window is converted into a Log-Mel spectrogram.
+5. The trained CNN–Transformer model classifies each window as REAL or AI-GENERATED.
+6. The application displays the segment-level predictions on a timeline.
+
+### Detection modes
+
+| Mode | Description |
+|---|---|
+| Standard Detection | Classifies a four-second audio input |
+| Hybrid Detection | Analyzes the recording across overlapping windows to identify potentially mixed speech |
+
+**Limitations:** Hybrid detection provides approximate window-level predictions rather than exact edit boundaries. Short synthetic sections may be missed, and further evaluation on mixed recordings is required.
+
 ## System architecture
 
-The application separates the user interface, API, audio analysis, storage, and offline training. The trained checkpoint connects the training workflow to inference.
+## System Architecture
 
-```mermaid
-flowchart TB
-    subgraph CLIENT["PRESENTATION LAYER"]
-        UI["React and Vite dashboard"]
-    end
-
-    subgraph SERVER["APPLICATION LAYER"]
-        API["FastAPI request handling"]
-        UPLOAD["Validation and temporary upload"]
-        API --> UPLOAD
-    end
-
-    subgraph AUDIO["AUDIO ANALYSIS"]
-        PREP["Prepare single input or timeline windows"]
-        MEL["Log-Mel features: 80 x 251"]
-        MODEL["CNN-Transformer inference"]
-        RESULT["Class scores and timeline summary"]
-        VIS["Waveform and spectrogram"]
-        PREP --> MEL --> MODEL --> RESULT
-    end
-
-    subgraph STORAGE["HISTORY STORAGE"]
-        DB[("SQLite prediction metadata")]
-    end
-
-    subgraph OFFLINE["OFFLINE TRAINING"]
-        DATA["Hugging Face dataset and split indices"]
-        TRAIN["Preprocessing, features, training and validation"]
-        WEIGHTS["Saved model checkpoint"]
-        DATA --> TRAIN --> WEIGHTS
-    end
-
-    UI -->|"Upload or history request"| API
-    UPLOAD -->|"Prediction"| PREP
-    UPLOAD -->|"Visual analysis"| VIS
-    RESULT -->|"Prediction result"| API
-    VIS -->|"Audio diagnostics"| API
-    API -->|"JSON response"| UI
-    API -->|"Save prediction or query history"| DB
-    DB -->|"History records"| API
-    WEIGHTS -. "Load for inference" .-> MODEL
-
-    classDef blue fill:#DBEAFE,stroke:#2563EB,color:#172554,stroke-width:2px
-    classDef teal fill:#CCFBF1,stroke:#0F766E,color:#134E4A,stroke-width:2px
-    classDef violet fill:#EDE9FE,stroke:#7C3AED,color:#3B0764,stroke-width:2px
-    classDef slate fill:#F1F5F9,stroke:#64748B,color:#0F172A,stroke-width:1px
-    classDef green fill:#DCFCE7,stroke:#15803D,color:#14532D,stroke-width:2px
-
-    class UI blue
-    class API,UPLOAD teal
-    class PREP,MEL,VIS slate
-    class MODEL,WEIGHTS violet
-    class RESULT,DB green
-    class DATA,TRAIN slate
-```
-
-*Figure 1. VoiceGuard AI system architecture. The frontend communicates with FastAPI; database access and model inference remain on the backend.*
+![VoiceGuard AI System Architecture](docs/architecture.png)
 
 | Component | Responsibility |
 |---|---|
