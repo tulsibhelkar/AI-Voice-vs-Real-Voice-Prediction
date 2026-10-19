@@ -1,148 +1,448 @@
-import { useEffect, useRef, useState } from "react";
-import PredictionTimeline from "./PredictionTimeline";
+
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
-const API_URL = (
+const API_BASE = (
   import.meta.env.VITE_API_URL || "http://127.0.0.1:8000"
 ).replace(/\/+$/, "");
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
-const ALLOWED_FORMATS = ["wav", "flac", "mp3"];
 
-// ============================================================
-// HELPERS
-// ============================================================
+const ICONS = {
+  logo: "◈",
+  analyze: "◉",
+  dashboard: "▦",
+  history: "◷",
+  model: "◇",
+  upload: "↑",
+  audio: "♫",
+  play: "▶",
+  close: "×",
+};
 
-function readHistory() {
+const LABELS = {
+  REAL: "Human Voice",
+  "AI-GENERATED": "AI-Generated Voice",
+  HYBRID: "Mixed Voice",
+  NO_SIGNAL: "No Signal",
+};
+
+function formatTime(value) {
+  const seconds = Math.max(0, Math.floor(Number(value) || 0));
+  const minutes = Math.floor(seconds / 60);
+
+  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function formatConfidence(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "—";
+  }
+
+  const percentage = value <= 1 ? value * 100 : value;
+  return `${Math.min(100, Math.max(0, percentage)).toFixed(1)}%`;
+}
+
+function loadHistory() {
   try {
     const stored = JSON.parse(
       localStorage.getItem("voiceguard-history") || "[]"
     );
 
-    return Array.isArray(stored)
-      ? stored
-          .filter((item) => item && typeof item === "object")
-          .slice(0, 30)
-      : [];
+    return Array.isArray(stored) ? stored.slice(0, 30) : [];
   } catch {
     return [];
   }
 }
 
-function apiError(data, fallback) {
+function getApiError(data, fallback) {
   if (typeof data?.detail === "string") {
     return data.detail;
   }
 
   if (Array.isArray(data?.detail)) {
-    return (
-      data.detail
-        .map((item) => item.msg)
-        .filter(Boolean)
-        .join("; ") || fallback
-    );
+    return data.detail
+      .map((item) => item.msg || "Validation error")
+      .join(", ");
   }
 
   return fallback;
 }
 
-function formatScore(value) {
-  return typeof value === "number" && Number.isFinite(value)
-    ? `${value.toFixed(2)}%`
-    : "—";
-}
-
-// ============================================================
-// ICONS
-// ============================================================
-
-function Icon({ name, size = 20 }) {
-  const icons = {
-    wave: (
-      <path d="M2 12h2m2-5v10m3-14v18m3-12v6m3-10v14m3-17v20m3-13v6" />
-    ),
-
-    upload: (
-      <>
-        <path d="M12 16V3m-5 5 5-5 5 5" />
-        <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
-      </>
-    ),
-
-    arrow: <path d="M4 12h16m-6-6 6 6-6 6" />,
-
-    close: <path d="M18 6 6 18M6 6l12 12" />,
-
-    check: <path d="m5 12 4 4L19 6" />,
-
-    shield: (
-      <>
-        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
-        <path d="m9 12 2 2 4-4" />
-      </>
-    ),
-
-    clock: (
-      <>
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 7v5l3 2" />
-      </>
-    ),
-
-    info: (
-      <>
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 11v5m0-8h.01" />
-      </>
-    ),
-  };
+function StatusBadge({ prediction }) {
+  const type =
+    prediction === "REAL"
+      ? "human"
+      : prediction === "AI-GENERATED"
+        ? "synthetic"
+        : prediction === "HYBRID"
+          ? "mixed"
+          : "neutral";
 
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {icons[name]}
-    </svg>
+    <span className={`status-badge ${type}`}>
+      <span className="status-indicator" />
+      {LABELS[prediction] || prediction}
+    </span>
   );
 }
 
-// ============================================================
-// APPLICATION
-// ============================================================
+function PageHeading({ eyebrow, title, description }) {
+  return (
+    <div className="page-heading">
+      <span className="eyebrow">{eyebrow}</span>
+      <h1>{title}</h1>
+      <p>{description}</p>
+    </div>
+  );
+}
 
-function App() {
-  const [activePage, setActivePage] = useState("Analyzer");
+function HistoryList({ items }) {
+  if (!items.length) {
+    return (
+      <div className="empty-state">
+        <div className="empty-state-icon">◷</div>
+        <strong>No recordings yet</strong>
+        <p>Your completed analyses will appear here.</p>
+      </div>
+    );
+  }
 
-  const [selectedFile, setSelectedFile] = useState(null);
+  return (
+    <div className="history-list">
+      {items.map((item, index) => (
+        <div className="history-item" key={item.id ?? index}>
+          <div className="history-icon">♫</div>
+
+          <div className="history-info">
+            <strong title={item.filename}>
+              {item.filename || "Audio recording"}
+            </strong>
+
+            <span>
+              {item.date
+                ? new Date(item.date).toLocaleString()
+                : "Previous analysis"}
+              {" · "}
+              {item.mode === "hybrid" ? "Hybrid" : "Standard"}
+            </span>
+          </div>
+
+          <StatusBadge prediction={item.prediction} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------
+// HYBRID TIMELINE
+// ------------------------------------------------------------
+
+function HybridTimeline({ result, audioRef }) {
+  const [active, setActive] = useState(-1);
+
+  const duration = Number(result?.duration_seconds) || 0;
+
+  const sections = useMemo(() => {
+    if (!duration || !Array.isArray(result?.segments)) {
+      return [];
+    }
+
+    const windows = result.segments
+      .map((segment) => ({
+        start: Math.max(0, Number(segment.start_time) || 0),
+        end: Math.min(
+          duration,
+          Number(segment.end_time) || 0
+        ),
+        prediction: segment.prediction,
+      }))
+      .filter(
+        (segment) =>
+          segment.end > segment.start &&
+          ["REAL", "AI-GENERATED"].includes(segment.prediction)
+      );
+
+    if (!windows.length) return [];
+
+    const boundaries = [
+      0,
+      duration,
+      ...windows.flatMap((segment) => [
+        segment.start,
+        segment.end,
+      ]),
+    ]
+      .sort((a, b) => a - b)
+      .filter(
+        (value, index, array) =>
+          index === 0 || value - array[index - 1] > 0.001
+      );
+
+    const output = [];
+
+    for (let index = 0; index < boundaries.length - 1; index++) {
+      const start = boundaries[index];
+      const end = boundaries[index + 1];
+      const middle = (start + end) / 2;
+
+      const covering = windows.filter(
+        (segment) =>
+          segment.start <= middle &&
+          segment.end >= middle
+      );
+
+      if (!covering.length) continue;
+
+      const humanVotes = covering.filter(
+        (segment) => segment.prediction === "REAL"
+      ).length;
+
+      const aiVotes = covering.filter(
+        (segment) =>
+          segment.prediction === "AI-GENERATED"
+      ).length;
+
+      let prediction;
+
+      if (humanVotes > aiVotes) {
+        prediction = "REAL";
+      } else if (aiVotes > humanVotes) {
+        prediction = "AI-GENERATED";
+      } else {
+        // Display-only tie breaker.
+        // This does not modify the model prediction.
+        const nearest = [...covering].sort(
+          (a, b) =>
+            Math.abs((a.start + a.end) / 2 - middle) -
+            Math.abs((b.start + b.end) / 2 - middle)
+        )[0];
+
+        prediction = nearest.prediction;
+      }
+
+      const previous = output[output.length - 1];
+
+      if (
+        previous &&
+        previous.prediction === prediction &&
+        Math.abs(previous.end - start) < 0.001
+      ) {
+        previous.end = end;
+      } else {
+        output.push({ start, end, prediction });
+      }
+    }
+
+    return output;
+  }, [result, duration]);
+
+  useEffect(() => {
+    setActive(-1);
+  }, [result]);
+
+  function playSegment(segment, index) {
+    setActive(index);
+
+    if (!audioRef.current) return;
+
+    audioRef.current.currentTime = segment.start;
+    audioRef.current.play().catch(() => {});
+  }
+
+  if (!sections.length) return null;
+
+  return (
+    <section className="surface timeline-surface">
+      <div className="surface-heading">
+        <div>
+          <span className="eyebrow">TEMPORAL ANALYSIS</span>
+          <h2>Voice detection timeline</h2>
+          <p>
+            Explore classified sections throughout the recording.
+          </p>
+        </div>
+
+        <span className="subtle-chip">
+          {formatTime(duration)} total
+        </span>
+      </div>
+
+      <div className="timeline-legend">
+        <span>
+          <i className="legend-dot human-dot" />
+          Human Voice
+        </span>
+
+        <span>
+          <i className="legend-dot ai-dot" />
+          AI-Generated Voice
+        </span>
+      </div>
+
+      <div className="timeline-bar">
+        {sections.map((segment, index) => (
+          <button
+            key={index}
+            type="button"
+            className={`timeline-segment ${
+              segment.prediction === "REAL"
+                ? "human-segment"
+                : "ai-segment"
+            } ${active === index ? "segment-active" : ""}`}
+            style={{
+              width: `${
+                ((segment.end - segment.start) / duration) * 100
+              }%`,
+            }}
+            title={`${LABELS[segment.prediction]} · ${formatTime(
+              segment.start
+            )} to ${formatTime(segment.end)}`}
+            onClick={() => playSegment(segment, index)}
+          />
+        ))}
+      </div>
+
+      <div className="timeline-axis">
+        <span>0:00</span>
+        <span>{formatTime(duration / 2)}</span>
+        <span>{formatTime(duration)}</span>
+      </div>
+
+      <div className="segments-heading">
+        <h3>Detected sections</h3>
+        <span>Select a section to play</span>
+      </div>
+
+      <div className="segment-list">
+        {sections.map((segment, index) => (
+          <button
+            type="button"
+            key={index}
+            className={`segment-row ${
+              active === index ? "row-active" : ""
+            }`}
+            onClick={() => playSegment(segment, index)}
+          >
+            <span className="segment-name">
+              <i
+                className={`legend-dot ${
+                  segment.prediction === "REAL"
+                    ? "human-dot"
+                    : "ai-dot"
+                }`}
+              />
+              {LABELS[segment.prediction]}
+            </span>
+
+            <span className="segment-range">
+              {formatTime(segment.start)}
+              {" — "}
+              {formatTime(segment.end)}
+            </span>
+
+            <span className="play-indicator">▶</span>
+          </button>
+        ))}
+      </div>
+
+      <p className="timeline-note">
+        Section boundaries are estimates from overlapping
+        four-second windows. Tied votes are displayed using
+        the nearest window's label.
+      </p>
+    </section>
+  );
+}
+
+function StandardTimeline({ result, audioRef }) {
+  const segments = Array.isArray(result?.segments)
+    ? result.segments
+    : [];
+
+  if (!segments.length) return null;
+
+  return (
+    <section className="surface timeline-surface">
+      <div className="surface-heading">
+        <div>
+          <span className="eyebrow">SEGMENT RESULTS</span>
+          <h2>Prediction timeline</h2>
+          <p>Review each analyzed audio window.</p>
+        </div>
+      </div>
+
+      <div className="segment-list">
+        {segments.map((segment, index) => (
+          <button
+            type="button"
+            className="segment-row"
+            key={index}
+            onClick={() => {
+              if (!audioRef.current) return;
+
+              audioRef.current.currentTime =
+                Number(segment.start_time) || 0;
+
+              audioRef.current.play().catch(() => {});
+            }}
+          >
+            <span className="segment-name">
+              <i
+                className={`legend-dot ${
+                  segment.prediction === "REAL"
+                    ? "human-dot"
+                    : "ai-dot"
+                }`}
+              />
+
+              {LABELS[segment.prediction] ||
+                segment.prediction}
+            </span>
+
+            <span className="segment-range">
+              {formatTime(segment.start_time)}
+              {" — "}
+              {formatTime(segment.end_time)}
+            </span>
+
+            <span className="play-indicator">▶</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ------------------------------------------------------------
+// MAIN APPLICATION
+// ------------------------------------------------------------
+
+export default function App() {
+  const [page, setPage] = useState("Analyzer");
+
+  const [file, setFile] = useState(null);
   const [audioUrl, setAudioUrl] = useState("");
-  const [isDragging, setIsDragging] = useState(false);
+  const [dragging, setDragging] = useState(false);
 
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisStage, setAnalysisStage] = useState("");
+  const [mode, setMode] = useState("hybrid");
+  const [resultMode, setResultMode] = useState("hybrid");
 
-  const [prediction, setPrediction] = useState(null);
-  const [timeline, setTimeline] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState("");
 
-  const [visuals, setVisuals] = useState(null);
-  const [visualError, setVisualError] = useState("");
-
+  const [result, setResult] = useState(null);
   const [error, setError] = useState("");
-  const [history, setHistory] = useState(readHistory);
 
-  const fileInputRef = useRef(null);
+  const [history, setHistory] = useState(loadHistory);
+  const [search, setSearch] = useState("");
+
+  const inputRef = useRef(null);
   const audioRef = useRef(null);
-  const audioUrlRef = useRef("");
-  const requestRef = useRef(null);
+  const objectUrlRef = useRef("");
+  const controllerRef = useRef(null);
 
-  // Save recent results in this browser.
   useEffect(() => {
     try {
       localStorage.setItem(
@@ -150,1059 +450,811 @@ function App() {
         JSON.stringify(history)
       );
     } catch {
-      // Analysis still works if browser storage is unavailable.
+      // Browser storage may be disabled.
     }
   }, [history]);
 
-  // Clean up when the application unmounts.
   useEffect(() => {
     return () => {
-      requestRef.current?.abort();
-      requestRef.current = null;
+      controllerRef.current?.abort();
 
-      if (audioUrlRef.current) {
-        URL.revokeObjectURL(audioUrlRef.current);
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
       }
     };
   }, []);
 
-  function resetResults() {
-    setPrediction(null);
-    setTimeline(null);
-    setVisuals(null);
-    setVisualError("");
+  function resetResult() {
+    setResult(null);
     setError("");
   }
 
-  // ==========================================================
-  // SELECT AUDIO
-  // ==========================================================
+  function selectFile(selected) {
+    if (!selected || controllerRef.current) return;
 
-  function handleFile(file) {
-    if (!file || requestRef.current) return;
-
-    const extension = file.name
+    const extension = selected.name
       .split(".")
       .pop()
       ?.toLowerCase();
 
-    if (!ALLOWED_FORMATS.includes(extension)) {
-      setError("Please select a WAV, FLAC, or MP3 audio file.");
+    if (!["wav", "mp3", "flac"].includes(extension)) {
+      setError("Please upload a WAV, MP3, or FLAC audio file.");
       return;
     }
 
-    if (!file.size) {
-      setError(
-        "This file is empty. Please select another recording."
-      );
-      return;
-    }
-
-    if (file.size > MAX_FILE_SIZE) {
-      setError(
-        "Please select an audio file of 25 MB or smaller."
-      );
+    if (!selected.size || selected.size > MAX_FILE_SIZE) {
+      setError("File size must be greater than 0 and under 25 MB.");
       return;
     }
 
     audioRef.current?.pause();
 
-    if (audioUrlRef.current) {
-      URL.revokeObjectURL(audioUrlRef.current);
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
     }
 
-    const newUrl = URL.createObjectURL(file);
+    const nextUrl = URL.createObjectURL(selected);
 
-    audioUrlRef.current = newUrl;
+    objectUrlRef.current = nextUrl;
 
-    setSelectedFile(file);
-    setAudioUrl(newUrl);
-    resetResults();
+    setFile(selected);
+    setAudioUrl(nextUrl);
+
+    resetResult();
   }
 
   function removeFile() {
-    if (requestRef.current) return;
+    if (controllerRef.current) return;
 
     audioRef.current?.pause();
 
-    if (audioUrlRef.current) {
-      URL.revokeObjectURL(audioUrlRef.current);
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
     }
 
-    audioUrlRef.current = "";
+    objectUrlRef.current = "";
 
-    setSelectedFile(null);
+    setFile(null);
     setAudioUrl("");
-    resetResults();
 
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
+    resetResult();
   }
 
-  // ==========================================================
-  // TIMELINE PREDICTION
-  // ==========================================================
-
-  async function analyzeVoice() {
-    if (
-      !selectedFile ||
-      isAnalyzing ||
-      requestRef.current
-    ) {
-      return;
-    }
+  async function analyzeAudio() {
+    if (!file || controllerRef.current) return;
 
     const controller = new AbortController();
-    requestRef.current = controller;
+    controllerRef.current = controller;
 
-    setIsAnalyzing(true);
-    setAnalysisStage("Analyzing audio windows…");
-    resetResults();
+    const currentMode = mode;
 
     const formData = new FormData();
-    formData.append("file", selectedFile);
+    formData.append("file", file);
+
+    setLoading(true);
+    setLoadingMessage("Processing audio recording...");
+    setResultMode(currentMode);
+    resetResult();
 
     try {
-      const response = await fetch(
-        `${API_URL}/predict-timeline`,
-        {
-          method: "POST",
-          body: formData,
-          signal: controller.signal,
-        }
-      );
+      const endpoint =
+        currentMode === "hybrid"
+          ? "/analyze-hybrid"
+          : "/predict-timeline";
 
-      const data = await response
-        .json()
-        .catch(() => ({}));
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        method: "POST",
+        body: formData,
+        signal: controller.signal,
+      });
+
+      const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         throw new Error(
-          apiError(
-            data,
-            "Timeline analysis could not be completed."
-          )
+          getApiError(data, "Audio analysis failed.")
         );
       }
 
       if (
         !data.summary ||
-        !Array.isArray(data.segments) ||
-        !data.segments.length
+        !Array.isArray(data.segments)
       ) {
         throw new Error(
-          "The server returned an incomplete timeline response."
+          "The backend returned an incomplete analysis."
         );
       }
 
-      const summary = data.summary;
+      const prediction = data.summary.prediction;
 
       if (
-        !["REAL", "AI-GENERATED", "NO_SIGNAL"].includes(
-          summary.prediction
-        )
+        ![
+          "REAL",
+          "AI-GENERATED",
+          "HYBRID",
+          "NO_SIGNAL",
+        ].includes(prediction)
       ) {
         throw new Error(
-          "The server returned an unrecognized prediction label."
+          "The backend returned an unknown prediction."
         );
       }
 
-      if (
-        summary.prediction !== "NO_SIGNAL" &&
-        (
-          typeof summary.confidence !== "number" ||
-          !Number.isFinite(summary.confidence) ||
-          summary.confidence < 0 ||
-          summary.confidence > 100
-        )
-      ) {
-        throw new Error(
-          "The server returned an invalid model score."
-        );
-      }
+      setResult(data);
 
-      setTimeline(data);
-
-      setPrediction({
-        ...summary,
-        filename: data.filename || selectedFile.name,
-      });
-
-      // All-zero recordings do not receive a classification.
-      if (summary.prediction === "NO_SIGNAL") {
-        return;
-      }
-
-      const record = {
-        id: Date.now(),
-        filename: data.filename || selectedFile.name,
-        prediction: summary.prediction,
-        confidence: summary.confidence,
-        segment_count: data.segment_count,
-        duration_seconds: data.duration_seconds,
-        mode: "timeline",
-        date: new Date().toISOString(),
-      };
-
-      setHistory((previous) =>
-        [record, ...previous].slice(0, 30)
-      );
-
-      // ======================================================
-      // OPTIONAL AUDIO VISUALIZATIONS
-      // ======================================================
-
-      setAnalysisStage("Preparing audio visualizations…");
-
-      try {
-        const visualResponse = await fetch(
-          `${API_URL}/analyze-audio`,
-          {
-            method: "POST",
-            body: formData,
-            signal: controller.signal,
-          }
-        );
-
-        const visualData = await visualResponse
-          .json()
-          .catch(() => ({}));
-
-        if (!visualResponse.ok) {
-          throw new Error(
-            apiError(
-              visualData,
-              "Audio visualizations are unavailable."
-            )
-          );
-        }
-
-        // Backend structure:
-        // { filename, analysis: { waveform, log_mel, ... } }
-        const analysis = visualData.analysis;
-
-        if (
-          !analysis ||
-          (!analysis.waveform && !analysis.log_mel)
-        ) {
-          throw new Error(
-            "The visualization response does not contain images."
-          );
-        }
-
-        setVisuals(analysis);
-      } catch (visualFailure) {
-        if (controller.signal.aborted) {
-          throw visualFailure;
-        }
-
-        setVisualError(
-          "The audio images could not be loaded. Your prediction and timeline are available."
+      if (prediction !== "NO_SIGNAL") {
+        setHistory((previous) =>
+          [
+            {
+              id: `${Date.now()}-${Math.random()}`,
+              filename: file.name,
+              prediction,
+              mode: currentMode,
+              date: new Date().toISOString(),
+            },
+            ...previous,
+          ].slice(0, 30)
         );
       }
     } catch (failure) {
       if (!controller.signal.aborted) {
         setError(
           failure instanceof TypeError
-            ? "Cannot connect to the analysis service. Check that FastAPI is running on port 8000."
+            ? "Cannot connect to the FastAPI backend. Make sure the server is running."
             : failure.message
         );
       }
     } finally {
-      if (requestRef.current === controller) {
-        requestRef.current = null;
-        setIsAnalyzing(false);
-        setAnalysisStage("");
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+        setLoading(false);
+        setLoadingMessage("");
       }
     }
   }
 
-  // ==========================================================
-  // DISPLAY VALUES
-  // ==========================================================
+  const summary = result?.summary;
+  const prediction = summary?.prediction;
 
-  const resultLabel = prediction?.prediction || "";
+  const segments = Array.isArray(result?.segments)
+    ? result.segments
+    : [];
 
-  const isHuman = resultLabel === "REAL";
-  const isAI = resultLabel === "AI-GENERATED";
-  const hasSignal = isHuman || isAI;
+  const duration = Number(result?.duration_seconds) || 0;
 
-  const confidence = hasSignal
-    ? prediction.confidence
-    : null;
+  const totalSegments =
+    result?.segment_count ??
+    result?.total_segments ??
+    segments.length;
 
-  const humanCount = history.filter((item) =>
-    ["REAL", "HUMAN"].includes(
-      String(item.prediction).toUpperCase()
-    )
-  ).length;
+  const humanSegments =
+    result?.real_segment_count ??
+    segments.filter((s) => s.prediction === "REAL").length;
 
-  const aiCount = history.filter((item) =>
-    ["AI", "FAKE", "AI-GENERATED", "AI_GENERATED"].includes(
-      String(item.prediction).toUpperCase()
-    )
-  ).length;
+  const aiSegments =
+    result?.ai_segment_count ??
+    segments.filter(
+      (s) => s.prediction === "AI-GENERATED"
+    ).length;
+
+  const stats = useMemo(
+    () => ({
+      total: history.length,
+      human: history.filter(
+        (item) => item.prediction === "REAL"
+      ).length,
+      ai: history.filter(
+        (item) => item.prediction === "AI-GENERATED"
+      ).length,
+      mixed: history.filter(
+        (item) => item.prediction === "HYBRID"
+      ).length,
+    }),
+    [history]
+  );
+
+  const filteredHistory = history.filter((item) =>
+    String(item.filename || "")
+      .toLowerCase()
+      .includes(search.toLowerCase())
+  );
+
+  const navigation = [
+    { name: "Analyzer", icon: ICONS.analyze },
+    { name: "Dashboard", icon: ICONS.dashboard },
+    { name: "History", icon: ICONS.history },
+    { name: "Model", icon: ICONS.model },
+  ];
 
   return (
-    <div className="app">
-      {/* NAVIGATION */}
-      <header className="topbar">
-        <div className="topbar-inner">
-          <button
-            className="brand"
-            onClick={() => setActivePage("Analyzer")}
-            aria-label="VoiceGuard home"
-          >
-            <span className="brand-icon">
-              <Icon name="wave" size={22} />
-            </span>
+    <div className="vg-app">
+      {/* SIDEBAR */}
 
-            <span className="brand-text">
-              <strong>VoiceGuard</strong>
-              <small>VOICE AUTHENTICITY ANALYSIS</small>
-            </span>
-          </button>
+      <aside className="vg-sidebar">
+        <button
+          className="vg-brand"
+          type="button"
+          onClick={() => setPage("Analyzer")}
+        >
+          <span className="brand-symbol">{ICONS.logo}</span>
 
-          <nav
-            className="navigation"
-            aria-label="Main navigation"
-          >
-            {["Analyzer", "Dashboard", "History", "Model"].map(
-              (page) => (
-                <button
-                  key={page}
-                  className={
-                    activePage === page ? "active" : ""
-                  }
-                  aria-current={
-                    activePage === page ? "page" : undefined
-                  }
-                  onClick={() => setActivePage(page)}
-                >
-                  {page}
-                </button>
-              )
-            )}
-          </nav>
+          <span className="brand-text">
+            <strong>VoiceGuard</strong>
+            <small>AI AUDIO INTELLIGENCE</small>
+          </span>
+        </button>
+
+        <span className="nav-section-label">WORKSPACE</span>
+
+        <nav className="vg-navigation">
+          {navigation.map((item) => (
+            <button
+              type="button"
+              key={item.name}
+              className={
+                page === item.name ? "nav-active" : ""
+              }
+              onClick={() => setPage(item.name)}
+            >
+              <span className="navigation-icon">
+                {item.icon}
+              </span>
+              {item.name}
+            </button>
+          ))}
+        </nav>
+
+        <div className="sidebar-bottom">
+          <div className="sidebar-divider" />
+
+          <div className="sidebar-profile">
+            <div className="profile-icon">VG</div>
+
+            <div>
+              <strong>VoiceGuard AI</strong>
+              <small>Detection workspace</small>
+            </div>
+          </div>
         </div>
-      </header>
+      </aside>
 
-      <main className="container">
-        {/* ANALYZER PAGE */}
-        {activePage === "Analyzer" && (
-          <>
-            <section className="hero">
-              <div className="hero-content">
-                <div className="eyebrow">
-                  <span className="eyebrow-dot" />
-                  VOICE AUTHENTICITY DETECTION
-                </div>
+      {/* MAIN CONTENT */}
 
-                <h1>
-                  AI Voice or
-                  <br />
-                  <span>Human Voice?</span>
-                </h1>
+      <div className="vg-main">
+        <header className="vg-header">
+          <div className="breadcrumb">
+            <span>Workspace</span>
+            <span className="breadcrumb-divider">/</span>
+            <strong>{page}</strong>
+          </div>
 
-                <p>
-                  Analyze a voice recording, review its overall
-                  classification, and explore predictions across
-                  an interactive timeline.
-                </p>
+          <div className="header-right">
+            <span className="header-project">
+              AI Voice Detection
+            </span>
+            <div className="header-avatar">VG</div>
+          </div>
+        </header>
 
-                <div className="hero-points">
-                  <span>
-                    <Icon name="wave" size={17} />
-                    Audio analysis
-                  </span>
+        <main className="vg-content">
+          {/* ANALYZER PAGE */}
 
-                  <span>
-                    <Icon name="clock" size={17} />
-                    Prediction timeline
-                  </span>
-                </div>
-              </div>
+          {page === "Analyzer" && (
+            <>
+              <PageHeading
+                eyebrow="AUDIO INTELLIGENCE"
+                title="Voice Analyzer"
+                description="Identify human and AI-generated speech using intelligent audio classification."
+              />
 
-              <div
-                className="hero-visual"
-                aria-hidden="true"
-              >
-                <div className="visual-label">
-                  AUDIO SIGNAL
-                </div>
-
-                <div className="wave-bars">
-                  {[
-                    22, 36, 18, 52, 76, 34, 58, 92, 45, 72,
-                    29, 62, 86, 41, 69, 31, 56, 98, 48, 73,
-                    38, 84, 51, 24, 64, 42, 79, 30, 57, 20,
-                  ].map((height, index) => (
-                    <span
-                      key={index}
-                      style={{ height: `${height}%` }}
-                    />
-                  ))}
-                </div>
-
-                <div className="visual-footer">
-                  <span>INPUT SIGNAL</span>
-                  <span>→</span>
-                  <span>MODEL ANALYSIS</span>
-                </div>
-              </div>
-            </section>
-
-            {/* UPLOAD AREA */}
-            <div className="workspace-grid">
-              <section className="upload-card">
-                <div className="card-heading">
+              <section className="surface upload-surface">
+                <div className="surface-heading">
                   <div>
-                    <span className="section-label">
-                      01 / UPLOAD
+                    <span className="eyebrow">
+                      AUDIO INPUT
                     </span>
-
-                    <h2>Analyze your recording</h2>
-                    <p>Select a voice clip to begin.</p>
+                    <h2>Upload recording</h2>
+                    <p>
+                      Select an audio file to start a new detection.
+                    </p>
                   </div>
 
-                  <span className="file-types">
-                    WAV · FLAC · MP3
+                  <span className="subtle-chip">
+                    WAV · MP3 · FLAC
                   </span>
                 </div>
 
                 <input
-                  ref={fileInputRef}
+                  ref={inputRef}
                   type="file"
-                  className="visually-hidden"
-                  aria-label="Select an audio recording"
-                  accept=".wav,.flac,.mp3,audio/wav,audio/flac,audio/mpeg"
-                  disabled={isAnalyzing}
+                  accept=".wav,.mp3,.flac"
+                  hidden
+                  disabled={loading}
                   onChange={(event) => {
-                    handleFile(event.target.files?.[0]);
+                    selectFile(event.target.files?.[0]);
                     event.target.value = "";
                   }}
                 />
 
-                {!selectedFile ? (
+                {!file ? (
                   <div
-                    className={`drop-area ${
-                      isDragging ? "dragging" : ""
+                    className={`upload-dropzone ${
+                      dragging ? "dragging" : ""
                     }`}
                     onDragOver={(event) => {
                       event.preventDefault();
-                      setIsDragging(true);
+                      setDragging(true);
                     }}
                     onDragLeave={(event) => {
                       event.preventDefault();
-                      setIsDragging(false);
+                      setDragging(false);
                     }}
                     onDrop={(event) => {
                       event.preventDefault();
-                      setIsDragging(false);
-                      handleFile(
+                      setDragging(false);
+
+                      selectFile(
                         event.dataTransfer.files?.[0]
                       );
                     }}
                   >
                     <div className="upload-icon">
-                      <Icon name="upload" size={27} />
+                      {ICONS.upload}
                     </div>
 
-                    <h3>Drop an audio file here</h3>
-                    <p>or choose a file from your computer</p>
+                    <h3>Drag and drop your audio file</h3>
+
+                    <p>
+                      Or browse your device to select a recording
+                    </p>
 
                     <button
-                      className="browse-button"
+                      type="button"
+                      className="primary-button"
                       onClick={() =>
-                        fileInputRef.current?.click()
+                        inputRef.current?.click()
                       }
                     >
                       Browse files
-                      <Icon name="arrow" size={17} />
+                      <span>→</span>
                     </button>
 
-                    <small>Maximum file size: 25 MB</small>
+                    <small>
+                      Supports WAV, MP3, FLAC · Maximum 25 MB
+                    </small>
                   </div>
                 ) : (
                   <div className="selected-audio">
-                    <div className="selected-audio-header">
-                      <div className="audio-file-icon">
-                        <Icon name="wave" size={23} />
+                    <div className="file-card">
+                      <div className="file-icon">
+                        {ICONS.audio}
                       </div>
 
-                      <div className="audio-file-info">
-                        <strong title={selectedFile.name}>
-                          {selectedFile.name}
+                      <div className="file-details">
+                        <strong title={file.name}>
+                          {file.name}
                         </strong>
 
                         <span>
-                          {(
-                            selectedFile.size /
-                            (1024 * 1024)
-                          ).toFixed(2)}
-                          {" MB · "}
-                          {isAnalyzing
-                            ? "Analysis in progress"
-                            : timeline
-                              ? "Analysis complete"
-                              : "Ready for analysis"}
+                          {(file.size / 1048576).toFixed(2)}
+                          {" MB · "}Ready for analysis
                         </span>
                       </div>
 
                       <button
-                        className="remove-button"
+                        type="button"
+                        className="remove-file"
+                        disabled={loading}
                         onClick={removeFile}
-                        disabled={isAnalyzing}
                         aria-label="Remove audio file"
                       >
-                        <Icon name="close" size={18} />
+                        ×
                       </button>
                     </div>
 
-                    {/* Shared player used by the timeline */}
                     <audio
                       ref={audioRef}
                       controls
-                      src={audioUrl}
                       preload="metadata"
-                      aria-label="Audio recording playback"
-                    >
-                      Your browser does not support audio playback.
-                    </audio>
+                      src={audioUrl}
+                      className="audio-player"
+                    />
 
-                    <div className="audio-actions">
+                    <div className="mode-header">
+                      <h3>Detection mode</h3>
+                      <span>
+                        Choose your analysis method
+                      </span>
+                    </div>
+
+                    <div className="detection-modes">
                       <button
-                        className="change-button"
-                        onClick={() =>
-                          fileInputRef.current?.click()
-                        }
-                        disabled={isAnalyzing}
+                        type="button"
+                        disabled={loading}
+                        className={`detection-mode ${
+                          mode === "standard"
+                            ? "mode-active"
+                            : ""
+                        }`}
+                        onClick={() => setMode("standard")}
                       >
-                        Choose another file
+                        <span className="mode-icon">◉</span>
+
+                        <strong>
+                          Standard Detection
+                        </strong>
+
+                        <small>
+                          Classify human or AI-generated speech
+                        </small>
+
+                        <i className="mode-selector" />
                       </button>
 
                       <button
-                        className="analyze-button"
-                        onClick={analyzeVoice}
-                        disabled={isAnalyzing}
+                        type="button"
+                        disabled={loading}
+                        className={`detection-mode ${
+                          mode === "hybrid"
+                            ? "mode-active"
+                            : ""
+                        }`}
+                        onClick={() => setMode("hybrid")}
                       >
-                        {isAnalyzing ? (
-                          <>
-                            <span className="spinner" />
-                            Analyzing…
-                          </>
-                        ) : (
-                          <>
-                            Analyze voice
-                            <Icon name="arrow" size={18} />
-                          </>
-                        )}
+                        <span className="mode-icon">◇</span>
+
+                        <strong>
+                          Hybrid Detection
+                        </strong>
+
+                        <small>
+                          Identify human and AI voice sections
+                        </small>
+
+                        <i className="mode-selector" />
                       </button>
                     </div>
 
-                    {isAnalyzing && (
-                      <p
-                        className="model-warning"
-                        role="status"
-                      >
-                        {analysisStage}
-                      </p>
+                    <button
+                      type="button"
+                      className="primary-button run-analysis"
+                      disabled={loading}
+                      onClick={analyzeAudio}
+                    >
+                      {loading
+                        ? "Analyzing recording..."
+                        : "Analyze Recording"}
+
+                      {!loading && <span>→</span>}
+                    </button>
+
+                    <button
+                      type="button"
+                      className="change-audio"
+                      disabled={loading}
+                      onClick={() =>
+                        inputRef.current?.click()
+                      }
+                    >
+                      Choose another recording
+                    </button>
+
+                    {loading && (
+                      <div className="analysis-loading" role="status">
+                        <div className="progress-track">
+                          <span />
+                        </div>
+
+                        <p>{loadingMessage}</p>
+                      </div>
                     )}
                   </div>
                 )}
 
                 {error && (
-                  <div
-                    className="error-message"
-                    role="alert"
-                  >
-                    <Icon name="info" size={18} />
-                    <span>{error}</span>
+                  <div className="error-message" role="alert">
+                    {error}
                   </div>
                 )}
               </section>
 
-              {/* PROCESS CARD */}
-              <aside className="process-card">
-                <span className="section-label">
-                  THE PROCESS
-                </span>
+              {/* RESULTS */}
 
-                <h2>From recording to result</h2>
-
-                <div className="process-step">
-                  <span className="step-number">01</span>
-
-                  <div>
-                    <strong>Upload audio</strong>
-                    <p>Select a supported voice recording.</p>
-                  </div>
-                </div>
-
-                <div className="process-step">
-                  <span className="step-number">02</span>
-
-                  <div>
-                    <strong>Analyze each window</strong>
-                    <p>
-                      The model processes overlapping sections.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="process-step">
-                  <span className="step-number">03</span>
-
-                  <div>
-                    <strong>Explore the timeline</strong>
-                    <p>
-                      Compare predictions and listen to each section.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="process-note">
-                  <Icon name="info" size={17} />
-                  <span>
-                    Use a clear recording with minimal
-                    background noise.
-                  </span>
-                </div>
-              </aside>
-            </div>
-
-            {/* RESULTS */}
-            {prediction && (
-              <section
-                className="results"
-                aria-live="polite"
-              >
-                <div className="results-heading">
-                  <span className="section-label">
-                    02 / RESULT
-                  </span>
-
-                  <h2>Recording analysis</h2>
-
-                  <p>
-                    The overall result combines the scores
-                    of the analyzed windows.
-                  </p>
-                </div>
-
-                <div className="result-grid">
-                  <div
-                    className={`verdict-card ${
-                      isHuman
-                        ? "human-result"
-                        : isAI
-                          ? "ai-result"
-                          : ""
-                    }`}
-                  >
-                    <span className="result-overline">
-                      OVERALL CLASSIFICATION
-                    </span>
-
-                    <div className="result-symbol">
-                      <Icon
-                        name={
-                          isHuman
-                            ? "check"
-                            : isAI
-                              ? "wave"
-                              : "info"
-                        }
-                        size={30}
-                      />
-                    </div>
-
-                    <h3>
-                      {isHuman
-                        ? "Likely human voice"
-                        : isAI
-                          ? "Likely AI-generated voice"
-                          : "No audio signal"}
-                    </h3>
-
-                    {hasSignal ? (
-                      <p>
-                        The combined prediction is{" "}
-                        <strong>{resultLabel}</strong>.
-                      </p>
-                    ) : (
-                      <p>
-                        All analysis windows contained only
-                        zero-valued samples. Try another recording.
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="confidence-card">
-                    <span className="result-overline">
-                      COMBINED MODEL SCORE
-                    </span>
-
-                    <div className="confidence-value">
-                      {formatScore(confidence)}
-                    </div>
-
-                    {hasSignal && (
-                      <div
-                        className="confidence-track"
-                        role="progressbar"
-                        aria-label="Combined model score"
-                        aria-valuenow={confidence}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                      >
-                        <span
-                          style={{
-                            width: `${confidence}%`,
-                          }}
-                        />
-                      </div>
-                    )}
-
-                    <p>
-                      {hasSignal
-                        ? "Mean class score across analyzed windows"
-                        : "No classification score is available"}
-                    </p>
-
-                    <div className="analyzed-file">
-                      <Icon name="wave" size={16} />
-                      <span>{prediction.filename}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* CLICKABLE TIMELINE */}
-                <PredictionTimeline
-                  timeline={timeline}
-                  audioRef={audioRef}
-                />
-
-                {/* WAVEFORM AND SPECTROGRAM */}
-                {visuals && (
-                  <div className="visualizations">
-                    <div className="results-heading">
-                      <span className="section-label">
-                        03 / AUDIO VIEW
+              {result && (
+                <div className="analysis-results">
+                  <div className="results-heading">
+                    <div>
+                      <span className="eyebrow">
+                        ANALYSIS COMPLETE
                       </span>
 
-                      <h2>Audio feature preview</h2>
+                      <h2>Detection Results</h2>
 
                       <p>
-                        These plots show a preprocessed
-                        four-second preview. The timeline
-                        covers the full recording.
+                        Classification summary for your recording.
                       </p>
                     </div>
-
-                    <div className="visualization-grid">
-                      {visuals.waveform && (
-                        <div className="visualization-card">
-                          <h3>Waveform</h3>
-
-                          <img
-                            src={`data:image/png;base64,${visuals.waveform}`}
-                            alt="Waveform of the preprocessed audio preview"
-                          />
-                        </div>
-                      )}
-
-                      {visuals.log_mel && (
-                        <div className="visualization-card">
-                          <h3>Log-Mel spectrogram</h3>
-
-                          <img
-                            src={`data:image/png;base64,${visuals.log_mel}`}
-                            alt="Log-Mel spectrogram of the preprocessed audio preview"
-                          />
-                        </div>
-                      )}
-                    </div>
                   </div>
-                )}
 
-                {visualError && (
-                  <p
-                    className="model-warning"
-                    role="status"
-                  >
-                    {visualError}
+                  <div className="result-grid">
+                    <section className="surface verdict-surface">
+                      <span className="eyebrow">
+                        OVERALL PREDICTION
+                      </span>
+
+                      <div className="verdict-icon">
+                        {prediction === "REAL" ? "✓" : "◇"}
+                      </div>
+
+                      <h2>
+                        {LABELS[prediction] || prediction}
+                      </h2>
+
+                      <StatusBadge prediction={prediction} />
+
+                      <p>
+                        {prediction === "HYBRID"
+                          ? "The analyzed windows contain both human and AI-generated classifications."
+                          : prediction === "REAL"
+                            ? "The model classified the recording as human speech."
+                            : prediction === "AI-GENERATED"
+                              ? "The model classified the recording as AI-generated speech."
+                              : "The recording did not produce a usable voice classification."}
+                      </p>
+                    </section>
+
+                    <section className="surface summary-surface">
+                      <span className="eyebrow">
+                        ANALYSIS SUMMARY
+                      </span>
+
+                      <div className="summary-line">
+                        <span>Recording duration</span>
+                        <strong>
+                          {formatTime(duration)}
+                        </strong>
+                      </div>
+
+                      <div className="summary-line">
+                        <span>Detection mode</span>
+                        <strong>
+                          {resultMode === "hybrid"
+                            ? "Hybrid"
+                            : "Standard"}
+                        </strong>
+                      </div>
+
+                      <div className="summary-line">
+                        <span>Analyzed windows</span>
+                        <strong>{totalSegments}</strong>
+                      </div>
+
+                      {resultMode === "hybrid" ? (
+                        <>
+                          <div className="summary-line">
+                            <span>Human windows</span>
+                            <strong>{humanSegments}</strong>
+                          </div>
+
+                          <div className="summary-line">
+                            <span>AI-generated windows</span>
+                            <strong>{aiSegments}</strong>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="summary-line">
+                          <span>Model confidence</span>
+                          <strong>
+                            {formatConfidence(
+                              summary?.confidence
+                            )}
+                          </strong>
+                        </div>
+                      )}
+                    </section>
+                  </div>
+
+                  {resultMode === "hybrid" ? (
+                    <HybridTimeline
+                      result={result}
+                      audioRef={audioRef}
+                    />
+                  ) : (
+                    <StandardTimeline
+                      result={result}
+                      audioRef={audioRef}
+                    />
+                  )}
+
+                  <p className="result-disclaimer">
+                    VoiceGuard provides model-based predictions.
+                    These results are not definitive proof of
+                    authenticity. Hybrid detection accuracy
+                    requires validation on mixed recordings.
                   </p>
-                )}
-
-                <div className="result-disclaimer">
-                  <Icon name="info" size={18} />
-
-                  <span>
-                    Results are model estimates. The combined
-                    score is not the percentage of AI-generated
-                    audio in the recording.
-                  </span>
                 </div>
-              </section>
-            )}
-          </>
-        )}
+              )}
+            </>
+          )}
 
-        {/* DASHBOARD PAGE */}
-        {activePage === "Dashboard" && (
-          <section className="inner-page">
-            <span className="section-label">OVERVIEW</span>
+          {/* DASHBOARD */}
 
-            <h1>Analysis dashboard</h1>
+          {page === "Dashboard" && (
+            <>
+              <PageHeading
+                eyebrow="WORKSPACE OVERVIEW"
+                title="Dashboard"
+                description="Review recent voice detection activity and classification results."
+              />
 
-            <p>
-              Up to 30 recent classification results saved
-              in this browser.
-            </p>
-
-            <div className="stats-grid">
-              <div className="stat-card">
-                <span>Total classifications</span>
-                <strong>{history.length}</strong>
-              </div>
-
-              <div className="stat-card">
-                <span>Human classifications</span>
-                <strong>{humanCount}</strong>
-              </div>
-
-              <div className="stat-card">
-                <span>AI classifications</span>
-                <strong>{aiCount}</strong>
-              </div>
-            </div>
-
-            <button
-              className="browse-button"
-              onClick={() => setActivePage("History")}
-            >
-              View history
-              <Icon name="arrow" size={17} />
-            </button>
-          </section>
-        )}
-
-        {/* HISTORY PAGE */}
-        {activePage === "History" && (
-          <section className="inner-page">
-            <span className="section-label">
-              RECENT ACTIVITY
-            </span>
-
-            <h1>Analysis history</h1>
-
-            <p>
-              Up to 30 recent results saved in this browser.
-            </p>
-
-            {history.length > 0 ? (
-              <div className="history-list">
-                {history.map((item, index) => (
-                  <div
-                    className="history-item"
-                    key={item.id ?? index}
-                  >
-                    <div className="history-file-icon">
-                      <Icon name="wave" size={20} />
-                    </div>
-
-                    <div className="history-details">
-                      <strong>{item.filename}</strong>
-
-                      <small>
-                        {new Date(item.date).toLocaleString()}
-
-                        {item.mode === "timeline"
-                          ? ` · ${item.segment_count} analysis windows`
-                          : ""}
-                      </small>
-                    </div>
-
-                    <div className="history-result">
-                      <strong>{item.prediction}</strong>
-
-                      <small>
-                        {formatScore(item.confidence)} model score
-                      </small>
-                    </div>
+              <div className="statistics-grid">
+                {[
+                  ["Total Analyses", stats.total],
+                  ["Human Voice", stats.human],
+                  ["AI-Generated", stats.ai],
+                  ["Mixed Voice", stats.mixed],
+                ].map(([label, value]) => (
+                  <div className="surface statistic" key={label}>
+                    <span>{label}</span>
+                    <strong>{value}</strong>
                   </div>
                 ))}
               </div>
-            ) : (
-              <div className="empty-history">
-                <Icon name="clock" size={30} />
 
-                <h2>No recordings analyzed yet</h2>
+              <section className="surface">
+                <div className="surface-heading">
+                  <div>
+                    <span className="eyebrow">
+                      ACTIVITY
+                    </span>
+                    <h2>Recent analyses</h2>
+                  </div>
 
-                <p>
-                  Your results will appear here after
-                  the first analysis.
-                </p>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => setPage("History")}
+                  >
+                    View all →
+                  </button>
+                </div>
 
-                <button
-                  className="browse-button"
-                  onClick={() => setActivePage("Analyzer")}
-                >
-                  Open analyzer
-                </button>
+                <HistoryList items={history.slice(0, 5)} />
+              </section>
+            </>
+          )}
+
+          {/* HISTORY */}
+
+          {page === "History" && (
+            <>
+              <PageHeading
+                eyebrow="ANALYSIS RECORDS"
+                title="History"
+                description="Browse previous audio classification results saved in this browser."
+              />
+
+              <section className="surface">
+                <div className="surface-heading">
+                  <div>
+                    <h2>Analysis history</h2>
+                    <p>
+                      {history.length} saved recordings
+                    </p>
+                  </div>
+
+                  {history.length > 0 && (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            "Clear all analysis history?"
+                          )
+                        ) {
+                          setHistory([]);
+                        }
+                      }}
+                    >
+                      Clear history
+                    </button>
+                  )}
+                </div>
+
+                <input
+                  className="history-search"
+                  type="search"
+                  placeholder="Search recordings..."
+                  value={search}
+                  onChange={(event) =>
+                    setSearch(event.target.value)
+                  }
+                />
+
+                <HistoryList items={filteredHistory} />
+              </section>
+            </>
+          )}
+
+          {/* MODEL */}
+
+          {page === "Model" && (
+            <>
+              <PageHeading
+                eyebrow="MODEL INFORMATION"
+                title="Detection Model"
+                description="Technical information about the VoiceGuard classification pipeline."
+              />
+
+              <div className="model-grid">
+                {[
+                  [
+                    "01",
+                    "Audio Processing",
+                    "Audio is prepared as mono speech sampled at 16 kHz.",
+                  ],
+                  [
+                    "02",
+                    "Feature Extraction",
+                    "Log-Mel spectrograms represent the audio features.",
+                  ],
+                  [
+                    "03",
+                    "CNN + Transformer",
+                    "The trained network predicts human or AI-generated speech.",
+                  ],
+                  [
+                    "04",
+                    "Hybrid Detection",
+                    "Overlapping four-second windows analyze the complete recording.",
+                  ],
+                ].map(([number, title, description]) => (
+                  <div className="surface model-card" key={number}>
+                    <span>{number}</span>
+                    <h3>{title}</h3>
+                    <p>{description}</p>
+                  </div>
+                ))}
               </div>
-            )}
-          </section>
-        )}
 
-        {/* UPDATED MODEL PAGE */}
-        {activePage === "Model" && (
-          <section className="inner-page">
-            <span className="section-label">
-              MODEL OVERVIEW
-            </span>
+              <section className="surface">
+                <div className="surface-heading">
+                  <div>
+                    <span className="eyebrow">
+                      SPECIFICATIONS
+                    </span>
+                    <h2>Model configuration</h2>
+                  </div>
+                </div>
 
-            <h1>AI Voice vs Real Voice Prediction</h1>
+                {[
+                  ["Architecture", "CNN + Transformer"],
+                  ["Sample rate", "16,000 Hz"],
+                  ["Input features", "80 × 251 Log-Mel"],
+                  ["Input duration", "4 seconds"],
+                  ["Hybrid step", "2 seconds"],
+                  ["Classification", "REAL / AI-GENERATED"],
+                ].map(([label, value]) => (
+                  <div className="summary-line" key={label}>
+                    <span>{label}</span>
+                    <strong>{value}</strong>
+                  </div>
+                ))}
+              </section>
+            </>
+          )}
+        </main>
 
-            <p>
-              A trained CNN + Transformer classifier analyzes
-              overlapping audio windows. The system combines
-              their class scores and displays each window
-              on a playback timeline.
-            </p>
-
-            <div className="stats-grid">
-              <div className="stat-card">
-                <span>Timeline sample rate</span>
-                <strong>16 kHz</strong>
-              </div>
-
-              <div className="stat-card">
-                <span>Analysis window</span>
-                <strong>4 sec</strong>
-              </div>
-
-              <div className="stat-card">
-                <span>Window step</span>
-                <strong>2 sec</strong>
-              </div>
-            </div>
-
-            <div className="model-grid">
-              <div>
-                <span>01 / FEATURES</span>
-
-                <h2>Log-Mel spectrogram</h2>
-
-                <p>
-                  Each window passes through the existing
-                  preprocessing and feature extraction pipeline.
-                </p>
-              </div>
-
-              <div>
-                <span>02 / CLASSIFIER</span>
-
-                <h2>CNN + Transformer</h2>
-
-                <p>
-                  The trained model returns two class scores:
-                  REAL (class 0) and AI-GENERATED (class 1).
-                </p>
-              </div>
-
-              <div>
-                <span>03 / SUMMARY</span>
-
-                <h2>Combined prediction</h2>
-
-                <p>
-                  The system averages each class score across
-                  analyzed windows and selects the class
-                  with the higher mean.
-                </p>
-              </div>
-            </div>
-
-            <details
-              style={{
-                border: "1px solid #e1e8f6",
-                borderRadius: 10,
-                padding: 20,
-              }}
-            >
-              <summary
-                style={{
-                  cursor: "pointer",
-                  fontWeight: 700,
-                  color: "#2454c6",
-                }}
-              >
-                Understanding the timeline and scores
-              </summary>
-
-              <ul
-                style={{
-                  color: "#62728c",
-                  fontSize: 13,
-                  lineHeight: 1.8,
-                  paddingLeft: 20,
-                }}
-              >
-                <li>
-                  Windows are created across the full recording
-                  before model-specific preprocessing.
-                </li>
-
-                <li>
-                  Four-second windows start every two seconds.
-                  Overlapping windows appear on separate
-                  timeline rows.
-                </li>
-
-                <li>
-                  A short final window uses padding for model
-                  input; its displayed end time stays at the
-                  recording’s actual end.
-                </li>
-
-                <li>
-                  Clicking a window starts playback at its
-                  timestamp and continues through the recording.
-                </li>
-
-                <li>
-                  All-zero windows are marked “No signal”
-                  and excluded from the combined score.
-                  This check does not detect speech or
-                  background noise.
-                </li>
-
-                <li>
-                  The combined score is a mean model score.
-                  It is not test-set accuracy or the percentage
-                  of AI-generated speech.
-                </li>
-
-                <li>
-                  Segment predictions indicate model assessments
-                  within windows; they do not establish exact
-                  editing boundaries.
-                </li>
-              </ul>
-            </details>
-          </section>
-        )}
-      </main>
-
-      <footer className="footer">
-        <span>VoiceGuard AI</span>
-        <span>AI Voice Detection · Final Year Project</span>
-      </footer>
+        <footer className="vg-footer">
+          <span>
+            © VoiceGuard AI · Voice Authenticity Detection
+          </span>
+          <span>
+            CNN + Transformer
+          </span>
+        </footer>
+      </div>
     </div>
   );
 }
-
-export default App;

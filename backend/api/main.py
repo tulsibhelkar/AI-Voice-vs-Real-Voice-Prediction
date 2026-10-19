@@ -1,5 +1,5 @@
 
-
+from training.hybrid_analysis import analyze_audio_segments
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 from training.predict import predict_audio
+from training.hybrid_analysis import analyze_audio_segments
 from backend.api.audio_analysis import analyze_audio_visuals
 from backend.database.database import (
     create_table,
@@ -450,3 +451,28 @@ def predict_timeline(
 
     finally:
         file.file.close()
+@app.post("/analyze-hybrid")
+def analyze_hybrid(file: UploadFile = File(...)):
+    try:
+        extension = Path(file.filename).suffix.lower()
+
+        if extension not in {".wav", ".mp3", ".flac"}:
+            raise HTTPException(
+                status_code=400,
+                detail="Only WAV, MP3 and FLAC files are supported."
+            )
+
+        with TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / f"audio{extension}"
+
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+
+            result = analyze_audio_segments(str(file_path))
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
