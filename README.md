@@ -67,10 +67,6 @@ Unlike standard prediction, which uses a single four-second input, hybrid analys
 
 **Limitations:** Hybrid detection provides approximate window-level predictions rather than exact edit boundaries. Short synthetic sections may be missed, and further evaluation on mixed recordings is required.
 
-## System architecture
-
-## System Architecture
-
 ## System Architecture
 
 ![VoiceGuard AI System Architecture](docs/architecture.png)
