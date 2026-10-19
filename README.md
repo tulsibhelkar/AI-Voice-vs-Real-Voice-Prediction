@@ -71,6 +71,8 @@ Unlike standard prediction, which uses a single four-second input, hybrid analys
 
 ## System Architecture
 
+## System Architecture
+
 ![VoiceGuard AI System Architecture](docs/architecture.png)
 
 | Component | Responsibility |
